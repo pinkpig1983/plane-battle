@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>天空突击队</title>
+  <style>
+    :root {
+      --bg-top: #061a2b;
+      --bg-bottom: #103a56;
+      --panel: rgba(7, 20, 33, 0.72);
+      --line: rgba(255, 255, 255, 0.12);
+      --text: #f4f7fb;
+      --accent: #ffb703;
+      --danger: #ff4d6d;
+      --ok: #8ecae6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top, rgba(255, 183, 3, 0.2), transparent 28%),
+        linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
+      overflow: hidden;
+    }
+
+    .shell {
+      width: min(94vw, 460px);
+      display: grid;
+      gap: 14px;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--panel);
+      backdrop-filter: blur(12px);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    }
+
+    .hud strong {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--ok);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hud span {
+      font-size: 1.2rem;
+      font-weight: 700;
+    }
+
+    .stage {
+      position: relative;
+      border-radius: 26px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.05), transparent),
+        linear-gradient(180deg, #0a2238, #124867);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background: rgba(3, 10, 18, 0.6);
+      transition: opacity 220ms ease;
+    }
+
+    .overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .card {
+      padding: 26px 22px;
+      border-radius: 22px;
+      border: 1px solid var(--line);
+      background: rgba(5, 16, 27, 0.78);
+      max-width: 320px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+      letter-spacing: 0.04em;
+    }
+
+    p {
+      margin: 10px 0;
+      line-height: 1.5;
+      color: rgba(244, 247, 251, 0.84);
+    }
+
+    button {
+      margin-top: 14px;
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 20px;
+      font-size: 1rem;
+      font-weight: 700;
+      cursor: pointer;
+      color: #12263a;
+      background: linear-gradient(135deg, #ffd166, #ffb703);
+    }
+
+    .tips {
+      padding: 0 6px;
+      color: rgba(244, 247, 251, 0.72);
+      font-size: 0.92rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hud">
+      <div>
+        <strong>分数</strong>
+        <span id="score">0</span>
+      </div>
+      <div>
+        <strong>生命</strong>
+        <span id="lives">3</span>
+      </div>
+      <div>
+        <strong>最高分</strong>
+        <span id="best">0</span>
+      </div>
+    </section>
+
+    <section class="stage">
+      <canvas id="game" width="420" height="680" aria-label="打飞机游戏画布"></canvas>
+      <div class="overlay" id="overlay">
+        <div class="card">
+          <h1>天空突击队</h1>
+          <p>左右移动战机，自动发射子弹，击落敌机并尽量生存更久。</p>
+          <p>电脑：`A / D` 或方向键，手机：手指拖动。</p>
+          <button id="startButton">开始游戏</button>
+        </div>
+      </div>
+    </section>
+
+    <div class="tips">纯 HTML / CSS / JavaScript 单文件实现，可直接部署到 GitHub Pages。</div>
+  </main>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("overlay");
+    const startButton = document.getElementById("startButton");
+    const scoreEl = document.getElementById("score");
+    const livesEl = document.getElementById("lives");
+    const bestEl = document.getElementById("best");
+
+    const width = canvas.width;
+    const height = canvas.height;
+    const bestKey = "plane-best-score";
+
+    const state = {
+      running: false,
+      score: 0,
+      lives: 3,
+      lastTime: 0,
+      shootTimer: 0,
+      enemyTimer: 0,
+      starsOffset: 0,
+      keys: new Set(),
+      pointerActive: false,
+      player: null,
+      bullets: [],
+      enemies: [],
+      particles: []
+    };
+
+    function loadBest() {
+      return Number(localStorage.getItem(bestKey) || 0);
+    }
+
+    function saveBest(score) {
+      localStorage.setItem(bestKey, String(score));
+    }
+
+    function resetGame() {
+      state.running = true;
+      state.score = 0;
+      state.lives = 3;
+      state.lastTime = 0;
+      state.shootTimer = 0;
+      state.enemyTimer = 0;
+      state.starsOffset = 0;
+      state.keys.clear();
+      state.pointerActive = false;
+      state.bullets = [];
+      state.enemies = [];
+      state.particles = [];
+      state.player = {
+        x: width / 2,
+        y: height - 90,
+        w: 34,
+        h: 44,
+        speed: 280
+      };
+      syncHud();
+      overlay.classList.add("hidden");
+      startButton.textContent = "重新开始";
+      requestAnimationFrame(loop);
+    }
+
+    function syncHud() {
+      scoreEl.textContent = state.score;
+      livesEl.textContent = state.lives;
+      bestEl.textContent = loadBest();
+    }
+
+    function spawnBullet() {
+      const p = state.player;
+      state.bullets.push({
+        x: p.x,
+        y: p.y - p.h / 2,
+        vy: -480,
+        r: 4
+      });
+    }
+
+    function spawnEnemy() {
+      const size = 22 + Math.random() * 18;
+      state.enemies.push({
+        x: 25 + Math.random() * (width - 50),
+        y: -40,
+        w: size,
+        h: size + 12,
+        vy: 110 + Math.random() * 120
+      });
+    }
+
+    function burst(x, y, color) {
+      for (let i = 0; i < 10; i += 1) {
+        state.particles.push({
+          x,
+          y,
+          vx: (Math.random() - 0.5) * 180,
+          vy: (Math.random() - 0.5) * 180,
+          life: 0.5 + Math.random() * 0.35,
+          color
+        });
+      }
+    }
+
+    function update(dt) {
+      const p = state.player;
+      const move = (state.keys.has("ArrowLeft") || state.keys.has("a") ? -1 : 0)
+        + (state.keys.has("ArrowRight") || state.keys.has("d") ? 1 : 0);
+      p.x += move * p.speed * dt;
+      p.x = Math.max(p.w / 2 + 10, Math.min(width - p.w / 2 - 10, p.x));
+
+      state.shootTimer += dt;
+      state.enemyTimer += dt;
+      state.starsOffset += dt * 80;
+
+      if (state.shootTimer >= 0.18) {
+        state.shootTimer = 0;
+        spawnBullet();
+      }
+
+      if (state.enemyTimer >= 0.6) {
+        state.enemyTimer = 0;
+        spawnEnemy();
+      }
+
+      state.bullets.forEach((bullet) => {
+        bullet.y += bullet.vy * dt;
+      });
+      state.enemies.forEach((enemy) => {
+        enemy.y += enemy.vy * dt;
+      });
+      state.particles.forEach((particle) => {
+        particle.x += particle.vx * dt;
+        particle.y += particle.vy * dt;
+        particle.life -= dt;
+      });
+
+      for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
+        const enemy = state.enemies[i];
+
+        if (enemy.y - enemy.h > height) {
+          state.enemies.splice(i, 1);
+          state.lives -= 1;
+          syncHud();
+          if (state.lives <= 0) {
+            endGame();
+            return;
+          }
+          continue;
+        }
+
+        if (hitRect(p, enemy)) {
+          burst(enemy.x, enemy.y, "#ff4d6d");
+          state.enemies.splice(i, 1);
+          state.lives -= 1;
+          syncHud();
+          if (state.lives <= 0) {
+            endGame();
+            return;
+          }
+        }
+      }
+
+      for (let i = state.bullets.length - 1; i >= 0; i -= 1) {
+        const bullet = state.bullets[i];
+        if (bullet.y < -20) {
+          state.bullets.splice(i, 1);
+          continue;
+        }
+
+        let hit = false;
+        for (let j = state.enemies.length - 1; j >= 0; j -= 1) {
+          const enemy = state.enemies[j];
+          if (hitCircleRect(bullet, enemy)) {
+            state.bullets.splice(i, 1);
+            state.enemies.splice(j, 1);
+            state.score += 10;
+            burst(enemy.x, enemy.y, "#ffd166");
+            const best = Math.max(loadBest(), state.score);
+            saveBest(best);
+            syncHud();
+            hit = true;
+            break;
+          }
+        }
+        if (hit) {
+          continue;
+        }
+      }
+
+      state.particles = state.particles.filter((particle) => particle.life > 0);
+    }
+
+    function drawBackground() {
+      const offset = state.starsOffset % height;
+      ctx.save();
+      for (let layer = 0; layer < 2; layer += 1) {
+        const alpha = layer === 0 ? 0.45 : 0.2;
+        ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+        for (let i = 0; i < 45; i += 1) {
+          const x = (i * 83 + layer * 39) % width;
+          const y = ((i * 57 + offset * (layer + 1.4)) % height);
+          ctx.beginPath();
+          ctx.arc(x, y, layer === 0 ? 1.4 : 2.2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    function drawPlayer() {
+      const p = state.player;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.fillStyle = "#8ecae6";
+      ctx.beginPath();
+      ctx.moveTo(0, -p.h / 2);
+      ctx.lineTo(p.w / 2, p.h / 2);
+      ctx.lineTo(0, p.h / 4);
+      ctx.lineTo(-p.w / 2, p.h / 2);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = "#ffb703";
+      ctx.fillRect(-4, -8, 8, 18);
+      ctx.fillStyle = "#fb8500";
+      ctx.fillRect(-12, p.h / 2 - 2, 6, 10);
+      ctx.fillRect(6, p.h / 2 - 2, 6, 10);
+      ctx.restore();
+    }
+
+    function drawBullets() {
+      ctx.fillStyle = "#ffd166";
+      state.bullets.forEach((bullet) => {
+        ctx.beginPath();
+        ctx.arc(bullet.x, bullet.y, bullet.r, 0, Math.PI * 2);
+        ctx.fill();
+      });
+    }
+
+    function drawEnemies() {
+      state.enemies.forEach((enemy) => {
+        ctx.save();
+        ctx.translate(enemy.x, enemy.y);
+        ctx.fillStyle = "#ff4d6d";
+        ctx.beginPath();
+        ctx.moveTo(0, enemy.h / 2);
+        ctx.lineTo(enemy.w / 2, -enemy.h / 2);
+        ctx.lineTo(0, -enemy.h / 4);
+        ctx.lineTo(-enemy.w / 2, -enemy.h / 2);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = "#ffe5ec";
+        ctx.fillRect(-3, -5, 6, 12);
+        ctx.restore();
+      });
+    }
+
+    function drawParticles() {
+      state.particles.forEach((particle) => {
+        ctx.fillStyle = particle.color;
+        ctx.globalAlpha = Math.max(particle.life, 0);
+        ctx.fillRect(particle.x, particle.y, 3, 3);
+      });
+      ctx.globalAlpha = 1;
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, width, height);
+      drawBackground();
+      drawBullets();
+      drawEnemies();
+      drawParticles();
+      drawPlayer();
+    }
+
+    function loop(ts) {
+      if (!state.running) {
+        return;
+      }
+
+      if (!state.lastTime) {
+        state.lastTime = ts;
+      }
+      const dt = Math.min((ts - state.lastTime) / 1000, 0.032);
+      state.lastTime = ts;
+
+      update(dt);
+      render();
+
+      if (state.running) {
+        requestAnimationFrame(loop);
+      }
+    }
+
+    function endGame() {
+      state.running = false;
+      syncHud();
+      overlay.classList.remove("hidden");
+      overlay.querySelector("h1").textContent = "游戏结束";
+      overlay.querySelector("p").textContent = `本局得分 ${state.score}，再来一次。`;
+    }
+
+    function hitRect(player, enemy) {
+      return Math.abs(player.x - enemy.x) * 2 < player.w + enemy.w
+        && Math.abs(player.y - enemy.y) * 2 < player.h + enemy.h;
+    }
+
+    function hitCircleRect(circle, rect) {
+      const dx = Math.abs(circle.x - rect.x);
+      const dy = Math.abs(circle.y - rect.y);
+      return dx <= rect.w / 2 + circle.r && dy <= rect.h / 2 + circle.r;
+    }
+
+    startButton.addEventListener("click", () => {
+      overlay.querySelector("h1").textContent = "天空突击队";
+      overlay.querySelector("p").textContent = "左右移动战机，自动发射子弹，击落敌机并尽量生存更久。";
+      resetGame();
+    });
+
+    window.addEventListener("keydown", (event) => {
+      if (["ArrowLeft", "ArrowRight", "a", "d", "A", "D"].includes(event.key)) {
+        state.keys.add(event.key.toLowerCase());
+      }
+    });
+
+    window.addEventListener("keyup", (event) => {
+      state.keys.delete(event.key.toLowerCase());
+    });
+
+    canvas.addEventListener("pointerdown", (event) => {
+      state.pointerActive = true;
+      movePlayerToPointer(event);
+    });
+
+    canvas.addEventListener("pointermove", (event) => {
+      if (state.pointerActive) {
+        movePlayerToPointer(event);
+      }
+    });
+
+    window.addEventListener("pointerup", () => {
+      state.pointerActive = false;
+    });
+
+    function movePlayerToPointer(event) {
+      if (!state.player) {
+        return;
+      }
+      const rect = canvas.getBoundingClientRect();
+      const scale = width / rect.width;
+      state.player.x = (event.clientX - rect.left) * scale;
+      state.player.x = Math.max(state.player.w / 2 + 10, Math.min(width - state.player.w / 2 - 10, state.player.x));
+    }
+
+    bestEl.textContent = loadBest();
+    render();
+  </script>
+</body>
+</html>
