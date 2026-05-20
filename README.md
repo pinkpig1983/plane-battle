@@ -8,4 +8,4 @@
 
 ## 部署
 
-这个项目适合直接发布到 GitHub Pages。
+仓库内已经包含 GitHub Pages 工作流。推送到 `main` 后，GitHub Actions 会自动部署静态页面。
